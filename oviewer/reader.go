@@ -16,6 +16,44 @@ import (
 
 const FormFeed = "\f"
 
+type fileRead struct {
+	// File is the os.File.
+	file *os.File
+	// CFormat is a compressed format.
+	CFormat Compressed
+
+	// offset
+	offset int64
+	// 1 if EOF is reached.
+	eof int32
+	// notif when eof is reached.
+	eofCh chan struct{}
+	// 1 if there is a closed.
+	closed int32
+	// notify when reopening.
+	followCh chan struct{}
+	// openFollow represents the open followMode file.
+	openFollow int32
+	// 1 if there is a changed.
+	changed int32
+	// notify when a file changes.
+	changCh chan struct{}
+	// preventReload is true to prevent reload.
+	preventReload bool
+	// Is it possible to seek.
+	seekable bool
+}
+
+func NewFileRead() *fileRead {
+	return &fileRead{
+		eofCh:         make(chan struct{}),
+		followCh:      make(chan struct{}),
+		changCh:       make(chan struct{}),
+		seekable:      true,
+		preventReload: false,
+	}
+}
+
 // ReadFile reads file.
 // If the file name is empty, read from standard input.
 func (m *Document) ReadFile(fileName string) error {
@@ -26,11 +64,11 @@ func (m *Document) ReadFile(fileName string) error {
 	if err != nil {
 		return err
 	}
-	m.file = f
+	m.reader.file = f
 	m.FileName = fileName
 
-	cFormat, r := uncompressedReader(m.file)
-	m.CFormat = cFormat
+	cFormat, r := uncompressedReader(m.reader.file)
+	m.reader.CFormat = cFormat
 
 	go m.waitEOF()
 
@@ -49,30 +87,26 @@ func open(fileName string) (*os.File, error) {
 		return os.Stdin, nil
 	}
 
-	f, err := os.Open(fileName)
-	if err != nil {
-		return nil, err
-	}
-	return f, nil
+	return os.Open(fileName)
 }
 
 // waitEOF waits until EOF is reached before closing.
 func (m *Document) waitEOF() {
-	<-m.eofCh
-	if m.seekable {
+	<-m.reader.eofCh
+	if m.reader.seekable {
 		if err := m.close(); err != nil {
 			log.Printf("EOF: %s", err)
 		}
 	}
-	atomic.StoreInt32(&m.changed, 1)
-	m.followCh <- struct{}{}
+	atomic.StoreInt32(&m.reader.changed, 1)
+	m.reader.followCh <- struct{}{}
 }
 
 // ReadReader reads reader.
 // A wrapper for ReadAll, used when eofCh notifications are not needed.
 func (m *Document) ReadReader(r io.Reader) error {
 	go func() {
-		<-m.eofCh
+		<-m.reader.eofCh
 	}()
 
 	return m.ReadAll(r)
@@ -90,18 +124,18 @@ func (m *Document) ReadAll(r io.Reader) error {
 
 		if err := m.readAll(reader); err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, os.ErrClosed) {
-				m.eofCh <- struct{}{}
-				atomic.StoreInt32(&m.eof, 1)
+				m.reader.eofCh <- struct{}{}
+				atomic.StoreInt32(&m.reader.eof, 1)
 				return
 			}
 			log.Printf("error: %v\n", err)
-			atomic.StoreInt32(&m.eof, 0)
+			atomic.StoreInt32(&m.reader.eof, 0)
 			return
 		}
 	}()
 
 	// Named pipes for continuous read.
-	if !m.seekable {
+	if !m.reader.seekable {
 		m.onceFollowMode()
 	}
 	return nil
@@ -109,10 +143,10 @@ func (m *Document) ReadAll(r io.Reader) error {
 
 // onceFollowMode opens the follow mode only once.
 func (m *Document) onceFollowMode() {
-	if atomic.SwapInt32(&m.openFollow, 1) == 1 {
+	if atomic.SwapInt32(&m.reader.openFollow, 1) == 1 {
 		return
 	}
-	if m.file == nil {
+	if m.reader.file == nil {
 		return
 	}
 
@@ -127,18 +161,18 @@ func (m *Document) onceFollowMode() {
 // Seek to the position where the file was closed, and then read.
 func (m *Document) startFollowMode(ctx context.Context, cancel context.CancelFunc) {
 	defer cancel()
-	<-m.followCh
-	if m.seekable {
+	<-m.reader.followCh
+	if m.reader.seekable {
 		// Wait for the file to open until it changes.
 		select {
 		case <-ctx.Done():
 			return
-		case <-m.changCh:
+		case <-m.reader.changCh:
 		}
-		m.file = m.openFollowFile()
+		m.reader.file = m.openFollowFile()
 	}
 
-	r := compressedFormatReader(m.CFormat, m.file)
+	r := compressedFormatReader(m.reader.CFormat, m.reader.file)
 	if err := m.ContinueReadAll(ctx, r); err != nil {
 		log.Printf("%s follow mode read %v", m.FileName, err)
 	}
@@ -151,11 +185,11 @@ func (m *Document) openFollowFile() *os.File {
 	r, err := os.Open(m.FileName)
 	if err != nil {
 		log.Printf("openFollowFile: %s", err)
-		return m.file
+		return m.reader.file
 	}
-	atomic.StoreInt32(&m.closed, 0)
-	atomic.StoreInt32(&m.eof, 0)
-	if _, err := r.Seek(m.offset, io.SeekStart); err != nil {
+	atomic.StoreInt32(&m.reader.closed, 0)
+	atomic.StoreInt32(&m.reader.eof, 0)
+	if _, err := r.Seek(m.reader.offset, io.SeekStart); err != nil {
 		log.Printf("openFollowMode: %s", err)
 	}
 	return r
@@ -168,19 +202,19 @@ func (m *Document) close() error {
 		return nil
 	}
 
-	if m.seekable {
-		pos, err := m.file.Seek(0, io.SeekCurrent)
+	if m.reader.seekable {
+		pos, err := m.reader.file.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return fmt.Errorf("close: %w", err)
 		}
-		m.offset = pos
+		m.reader.offset = pos
 	}
-	if err := m.file.Close(); err != nil {
+	if err := m.reader.file.Close(); err != nil {
 		return fmt.Errorf("close: %w", err)
 	}
-	atomic.StoreInt32(&m.openFollow, 0)
-	atomic.StoreInt32(&m.closed, 1)
-	atomic.StoreInt32(&m.changed, 1)
+	atomic.StoreInt32(&m.reader.openFollow, 0)
+	atomic.StoreInt32(&m.reader.closed, 1)
+	atomic.StoreInt32(&m.reader.changed, 1)
 	return nil
 }
 
@@ -199,7 +233,7 @@ func (m *Document) ContinueReadAll(ctx context.Context, r io.Reader) error {
 
 		if err := m.readAll(reader); err != nil {
 			if errors.Is(err, io.EOF) {
-				<-m.changCh
+				<-m.reader.changCh
 				continue
 			}
 			return err
@@ -235,7 +269,7 @@ func (m *Document) append(lines ...string) {
 		m.endNum++
 	}
 	m.mu.Unlock()
-	atomic.StoreInt32(&m.changed, 1)
+	atomic.StoreInt32(&m.reader.changed, 1)
 }
 
 func (m *Document) appendFormFeed() {
@@ -256,15 +290,15 @@ func (m *Document) appendFormFeed() {
 // Regular files are reopened and reread increase.
 // The pipe will reset what it has read.
 func (m *Document) reload() error {
-	if (m.file == os.Stdin && m.BufEOF()) || !m.seekable && m.checkClose() {
+	if (m.reader.file == os.Stdin && m.BufEOF()) || !m.reader.seekable && m.checkClose() {
 		return fmt.Errorf("%w %s", ErrAlreadyClose, m.FileName)
 	}
 
-	if m.seekable {
+	if m.reader.seekable {
 		if m.cancel != nil {
 			m.cancel()
 		}
-		if !m.checkClose() && m.file != nil {
+		if !m.checkClose() && m.reader.file != nil {
 			if err := m.close(); err != nil {
 				log.Println(err)
 			}
@@ -278,11 +312,11 @@ func (m *Document) reload() error {
 		m.topLN = 0
 	}
 
-	if !m.seekable {
+	if !m.reader.seekable {
 		return nil
 	}
 
-	atomic.StoreInt32(&m.closed, 0)
+	atomic.StoreInt32(&m.reader.closed, 0)
 	return m.ReadFile(m.FileName)
 }
 
@@ -292,11 +326,11 @@ func (m *Document) reset() {
 	m.endNum = 0
 	m.lines = m.lines[:0]
 	m.mu.Unlock()
-	atomic.StoreInt32(&m.changed, 1)
+	atomic.StoreInt32(&m.reader.changed, 1)
 	m.ClearCache()
 }
 
 // checkClose returns if the file is closed.
 func (m *Document) checkClose() bool {
-	return atomic.LoadInt32(&m.closed) == 1
+	return atomic.LoadInt32(&m.reader.closed) == 1
 }

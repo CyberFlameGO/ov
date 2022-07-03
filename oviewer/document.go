@@ -21,41 +21,14 @@ type Document struct {
 	// Caption is an additional caption to display after the file name.
 	Caption string
 
-	// File is the os.File.
-	file *os.File
-	// offset
-	offset int64
-	// CFormat is a compressed format.
-	CFormat Compressed
-
-	// preventReload is true to prevent reload.
-	preventReload bool
-	// Is it possible to seek.
-	seekable bool
-
+	reader *fileRead
 	// lines stores the contents of the file in slices of strings.
 	// lines,endNum and eof is updated by reader goroutine.
 	lines []string
 	// endNum is the number of the last line read.
 	endNum int
 
-	// 1 if EOF is reached.
-	eof int32
-	// notify when eof is reached.
-	eofCh chan struct{}
-	// notify when reopening.
-	followCh chan struct{}
-	// openFollow represents the open followMode file.
-	openFollow int32
-
-	// 1 if there is a changed.
-	changed int32
-	// notify when a file changes.
-	changCh chan struct{}
-
 	cancel context.CancelFunc
-	// 1 if there is a closed.
-	closed int32
 
 	// cache represents a cache of contents.
 	cache *ristretto.Cache
@@ -101,19 +74,16 @@ type Document struct {
 // NewDocument returns Document.
 func NewDocument() (*Document, error) {
 	m := &Document{
-		lines:    make([]string, 0),
-		eofCh:    make(chan struct{}),
-		followCh: make(chan struct{}),
-		changCh:  make(chan struct{}),
+		lines: make([]string, 0),
 		general: general{
 			ColumnDelimiter: "",
 			TabWidth:        8,
 			MarkStyleWidth:  1,
 		},
 		lastContentsNum: -1,
-		seekable:        true,
-		preventReload:   false,
 	}
+
+	m.reader = NewFileRead()
 
 	if err := m.NewCache(); err != nil {
 		return nil, err
@@ -138,7 +108,7 @@ func OpenDocument(fileName string) (*Document, error) {
 
 	// named pipe.
 	if fi.Mode()&fs.ModeNamedPipe != 0 {
-		m.seekable = false
+		m.reader.seekable = false
 	}
 
 	if err := m.ReadFile(fileName); err != nil {
@@ -154,7 +124,7 @@ func STDINDocument() (*Document, error) {
 		return nil, err
 	}
 
-	m.seekable = false
+	m.reader.seekable = false
 	m.Caption = "(STDIN)"
 	if err := m.ReadFile(""); err != nil {
 		return nil, err
@@ -197,7 +167,7 @@ func (m *Document) BufEndNum() int {
 
 // BufEOF return true if EOF is reached.
 func (m *Document) BufEOF() bool {
-	return atomic.LoadInt32(&m.eof) == 1
+	return atomic.LoadInt32(&m.reader.eof) == 1
 }
 
 // NewCache creates a new cache.

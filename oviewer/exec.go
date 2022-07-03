@@ -44,14 +44,14 @@ func newOutErrDocument() (*Document, *Document, error) {
 		return nil, nil, err
 	}
 	docout.FileName = "STDOUT"
-	docout.preventReload = true
+	docout.reader.preventReload = true
 
 	docerr, err := NewDocument()
 	if err != nil {
 		return nil, nil, err
 	}
 	docerr.FileName = "STDERR"
-	docerr.preventReload = true
+	docerr.reader.preventReload = true
 
 	return docout, docerr, nil
 }
@@ -88,10 +88,10 @@ func commandStart(command *exec.Cmd) (io.Reader, io.Reader, error) {
 }
 
 func finishCommand(docout *Document, docerr *Document) {
-	<-docout.eofCh
-	<-docerr.eofCh
-	atomic.StoreInt32(&docout.changed, 1)
-	atomic.StoreInt32(&docerr.changed, 1)
-	atomic.StoreInt32(&docout.closed, 1)
-	atomic.StoreInt32(&docerr.closed, 1)
+	<-docout.reader.eofCh
+	<-docerr.reader.eofCh
+	atomic.StoreInt32(&docout.reader.changed, 1)
+	atomic.StoreInt32(&docerr.reader.changed, 1)
+	atomic.StoreInt32(&docout.reader.closed, 1)
+	atomic.StoreInt32(&docerr.reader.closed, 1)
 }

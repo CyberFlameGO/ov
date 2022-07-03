@@ -20,9 +20,9 @@ func NewHelp(k KeyBind) (*Document, error) {
 	str := strings.Split(KeyBindString(k), "\n")
 	m.append(str...)
 	m.FileName = "Help"
-	m.eof = 1
-	m.preventReload = true
-	m.seekable = false
+	m.reader.eof = 1
+	m.reader.preventReload = true
+	m.reader.seekable = false
 	return m, err
 }
 

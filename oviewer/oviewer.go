@@ -456,7 +456,7 @@ func (root *Root) SetWatcher(watcher *fsnotify.Watcher) {
 				for _, doc := range root.DocList {
 					if doc.FileName == event.Name {
 						select {
-						case doc.changCh <- struct{}{}:
+						case doc.reader.changCh <- struct{}{}:
 						default:
 						}
 					}

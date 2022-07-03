@@ -19,7 +19,7 @@ func (root *Root) hasDocChanged() bool {
 	defer root.mu.RUnlock()
 	eventFlag := false
 	for _, doc := range root.DocList {
-		if atomic.SwapInt32(&doc.changed, 0) == 1 {
+		if atomic.SwapInt32(&doc.reader.changed, 0) == 1 {
 			eventFlag = true
 		}
 	}

@@ -14,7 +14,7 @@ func NewLogDoc() (*Document, error) {
 	}
 	m.FollowMode = true
 	m.FileName = "Log"
-	m.seekable = false
+	m.reader.seekable = false
 	log.SetOutput(m)
 	return m, nil
 }
