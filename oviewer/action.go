@@ -74,11 +74,6 @@ func (root *Root) closeFile() {
 
 // reload reload a current document.
 func (root *Root) reload(m *Document) {
-	if m.reader.preventReload {
-		root.setMessagef("cannot reload: %s", m.FileName)
-		return
-	}
-
 	if err := m.reload(); err != nil {
 		log.Printf("cannot reload: %s", err)
 		return

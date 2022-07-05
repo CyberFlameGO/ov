@@ -90,8 +90,8 @@ func commandStart(command *exec.Cmd) (io.Reader, io.Reader, error) {
 func finishCommand(docout *Document, docerr *Document) {
 	<-docout.reader.eofCh
 	<-docerr.reader.eofCh
-	atomic.StoreInt32(&docout.reader.changed, 1)
-	atomic.StoreInt32(&docerr.reader.changed, 1)
+	docout.reader.change()
+	docerr.reader.change()
 	atomic.StoreInt32(&docout.reader.closed, 1)
 	atomic.StoreInt32(&docerr.reader.closed, 1)
 }

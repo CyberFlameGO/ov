@@ -22,6 +22,8 @@ type fileRead struct {
 	// CFormat is a compressed format.
 	CFormat Compressed
 
+	cancel context.CancelFunc
+
 	// offset
 	offset int64
 	// 1 if EOF is reached.
@@ -98,7 +100,7 @@ func (m *Document) waitEOF() {
 			log.Printf("EOF: %s", err)
 		}
 	}
-	atomic.StoreInt32(&m.reader.changed, 1)
+	m.change()
 	m.reader.followCh <- struct{}{}
 }
 
@@ -154,7 +156,7 @@ func (m *Document) onceFollowMode() {
 	ctx := context.Background()
 	ctx, cancel = context.WithCancel(ctx)
 	go m.startFollowMode(ctx, cancel)
-	m.cancel = cancel
+	m.reader.cancel = cancel
 }
 
 // startFollowMode opens the file in follow mode.
@@ -193,29 +195,6 @@ func (m *Document) openFollowFile() *os.File {
 		log.Printf("openFollowMode: %s", err)
 	}
 	return r
-}
-
-// Close closes the File.
-// Record the last read position.
-func (m *Document) close() error {
-	if m.checkClose() {
-		return nil
-	}
-
-	if m.reader.seekable {
-		pos, err := m.reader.file.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return fmt.Errorf("close: %w", err)
-		}
-		m.reader.offset = pos
-	}
-	if err := m.reader.file.Close(); err != nil {
-		return fmt.Errorf("close: %w", err)
-	}
-	atomic.StoreInt32(&m.reader.openFollow, 0)
-	atomic.StoreInt32(&m.reader.closed, 1)
-	atomic.StoreInt32(&m.reader.changed, 1)
-	return nil
 }
 
 // ContinueReadAll continues to read even if it reaches EOF.
@@ -269,7 +248,7 @@ func (m *Document) append(lines ...string) {
 		m.endNum++
 	}
 	m.mu.Unlock()
-	atomic.StoreInt32(&m.reader.changed, 1)
+	m.change()
 }
 
 func (m *Document) appendFormFeed() {
@@ -290,16 +269,20 @@ func (m *Document) appendFormFeed() {
 // Regular files are reopened and reread increase.
 // The pipe will reset what it has read.
 func (m *Document) reload() error {
-	if (m.reader.file == os.Stdin && m.BufEOF()) || !m.reader.seekable && m.checkClose() {
+	if m.reader.preventReload {
+		return fmt.Errorf("not file: %s", m.FileName)
+	}
+
+	if (m.reader.file == os.Stdin && m.BufEOF()) || !m.reader.seekable && m.reader.checkClose() {
 		return fmt.Errorf("%w %s", ErrAlreadyClose, m.FileName)
 	}
 
 	if m.reader.seekable {
-		if m.cancel != nil {
-			m.cancel()
+		if m.reader.cancel != nil {
+			m.reader.cancel()
 		}
-		if !m.checkClose() && m.reader.file != nil {
-			if err := m.close(); err != nil {
+		if !m.reader.checkClose() && m.reader.file != nil {
+			if err := m.reader.close(); err != nil {
 				log.Println(err)
 			}
 		}
@@ -326,11 +309,44 @@ func (m *Document) reset() {
 	m.endNum = 0
 	m.lines = m.lines[:0]
 	m.mu.Unlock()
-	atomic.StoreInt32(&m.reader.changed, 1)
+
+	m.change()
 	m.ClearCache()
 }
 
+// Close closes the File.
+// Record the last read position.
+func (r *fileRead) close() error {
+	if r.checkClose() {
+		return nil
+	}
+
+	if r.seekable {
+		pos, err := r.file.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return fmt.Errorf("close: %w", err)
+		}
+		r.offset = pos
+	}
+	if err := r.file.Close(); err != nil {
+		return fmt.Errorf("close: %w", err)
+	}
+	atomic.StoreInt32(&r.openFollow, 0)
+	atomic.StoreInt32(&r.closed, 1)
+	r.change()
+
+	return nil
+}
+
 // checkClose returns if the file is closed.
-func (m *Document) checkClose() bool {
-	return atomic.LoadInt32(&m.reader.closed) == 1
+func (r *fileRead) checkClose() bool {
+	return atomic.LoadInt32(&r.closed) == 1
+}
+
+func (r *fileRead) checkChangeAndReset() bool {
+	return atomic.SwapInt32(&r.changed, 0) == 1
+}
+
+func (r *fileRead) change() {
+	atomic.StoreInt32(&r.changed, 1)
 }

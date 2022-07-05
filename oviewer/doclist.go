@@ -3,7 +3,6 @@ package oviewer
 import (
 	"fmt"
 	"log"
-	"sync/atomic"
 )
 
 // DocumentLen returns the number of Docs.
@@ -19,7 +18,7 @@ func (root *Root) hasDocChanged() bool {
 	defer root.mu.RUnlock()
 	eventFlag := false
 	for _, doc := range root.DocList {
-		if atomic.SwapInt32(&doc.reader.changed, 0) == 1 {
+		if doc.checkChangeAndReset() {
 			eventFlag = true
 		}
 	}

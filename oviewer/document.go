@@ -28,8 +28,6 @@ type Document struct {
 	// endNum is the number of the last line read.
 	endNum int
 
-	cancel context.CancelFunc
-
 	// cache represents a cache of contents.
 	cache *ristretto.Cache
 
@@ -297,4 +295,20 @@ func (m *Document) unWatchMode() {
 func (m *Document) setSectionDelimiter(delm string) {
 	m.SectionDelimiter = delm
 	m.SectionDelimiterReg = regexpCompile(delm, true)
+}
+
+func (m *Document) checkClose() bool {
+	return m.reader.checkClose()
+}
+
+func (m *Document) change() {
+	m.reader.change()
+}
+
+func (m *Document) checkChangeAndReset() bool {
+	return m.reader.checkChangeAndReset()
+}
+
+func (m *Document) close() error {
+	return m.reader.close()
 }
