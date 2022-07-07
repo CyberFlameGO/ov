@@ -22,12 +22,8 @@ type Document struct {
 	Caption string
 
 	reader *fileRead
-	// lines stores the contents of the file in slices of strings.
-	// lines,endNum and eof is updated by reader goroutine.
-	lines []string
-	// endNum is the number of the last line read.
-	endNum int
 
+	buffer *buffer
 	// cache represents a cache of contents.
 	cache *ristretto.Cache
 
@@ -64,6 +60,14 @@ type Document struct {
 
 	// Last moved Section position.
 	lastSectionPosNum int
+}
+
+type buffer struct {
+	// lines stores the contents of the file in slices of strings.
+	// lines,endNum and eof is updated by reader goroutine.
+	lines []string
+	// endNum is the number of the last line read.
+	endNum int
 
 	// mu controls the mutex.
 	mu sync.Mutex
@@ -72,13 +76,15 @@ type Document struct {
 // NewDocument returns Document.
 func NewDocument() (*Document, error) {
 	m := &Document{
-		lines: make([]string, 0),
 		general: general{
 			ColumnDelimiter: "",
 			TabWidth:        8,
 			MarkStyleWidth:  1,
 		},
 		lastContentsNum: -1,
+	}
+	m.buffer = &buffer{
+		lines: make([]string, 0),
 	}
 
 	m.reader = NewFileRead()
@@ -132,13 +138,13 @@ func STDINDocument() (*Document, error) {
 
 // GetLine returns one line from buffer.
 func (m *Document) GetLine(n int) string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.buffer.mu.Lock()
+	defer m.buffer.mu.Unlock()
 
-	if n < 0 || n >= m.endNum {
+	if n < 0 || n >= m.buffer.endNum {
 		return ""
 	}
-	return m.lines[n]
+	return m.buffer.lines[n]
 }
 
 // CurrentLN returns the currently displayed line number.
@@ -158,9 +164,9 @@ func (m *Document) Export(w io.Writer, start int, end int) {
 
 // BufEndNum return last line number.
 func (m *Document) BufEndNum() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.endNum
+	m.buffer.mu.Lock()
+	defer m.buffer.mu.Unlock()
+	return m.buffer.endNum
 }
 
 // BufEOF return true if EOF is reached.

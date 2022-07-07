@@ -59,8 +59,8 @@ func NewFileRead() *fileRead {
 // ReadFile reads file.
 // If the file name is empty, read from standard input.
 func (m *Document) ReadFile(fileName string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.buffer.mu.Lock()
+	defer m.buffer.mu.Unlock()
 
 	f, err := open(fileName)
 	if err != nil {
@@ -182,8 +182,8 @@ func (m *Document) startFollowMode(ctx context.Context, cancel context.CancelFun
 
 // openFollowFile opens a file in follow mode.
 func (m *Document) openFollowFile() *os.File {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.buffer.mu.Lock()
+	defer m.buffer.mu.Unlock()
 	r, err := os.Open(m.FileName)
 	if err != nil {
 		log.Printf("openFollowFile: %s", err)
@@ -242,22 +242,22 @@ func (m *Document) readAll(reader *bufio.Reader) error {
 
 // append appends to the lines of the document.
 func (m *Document) append(lines ...string) {
-	m.mu.Lock()
+	m.buffer.mu.Lock()
 	for _, line := range lines {
-		m.lines = append(m.lines, line)
-		m.endNum++
+		m.buffer.lines = append(m.buffer.lines, line)
+		m.buffer.endNum++
 	}
-	m.mu.Unlock()
+	m.buffer.mu.Unlock()
 	m.change()
 }
 
 func (m *Document) appendFormFeed() {
 	line := ""
-	m.mu.Lock()
-	if m.endNum > 0 {
-		line = m.lines[m.endNum-1]
+	m.buffer.mu.Lock()
+	if m.buffer.endNum > 0 {
+		line = m.buffer.lines[m.buffer.endNum-1]
 	}
-	m.mu.Unlock()
+	m.buffer.mu.Unlock()
 
 	// Do not add if the previous is FormFeed.
 	if line != FormFeed {
@@ -305,10 +305,10 @@ func (m *Document) reload() error {
 
 // reset clears all lines.
 func (m *Document) reset() {
-	m.mu.Lock()
-	m.endNum = 0
-	m.lines = m.lines[:0]
-	m.mu.Unlock()
+	m.buffer.mu.Lock()
+	m.buffer.endNum = 0
+	m.buffer.lines = m.buffer.lines[:0]
+	m.buffer.mu.Unlock()
 
 	m.change()
 	m.ClearCache()
